@@ -12,31 +12,23 @@ var SPACING_MS = 250;   // time between two titles, so the game sees every one o
 var queue = [], busy = false, seq = 0, current = null;
 
 // The mod's data and the changes made to it. The same code runs in the game (DDB) and in the store page
-// (store.html, which keeps the data in the browser storage); build.py / publish_bridge.py paste it into both.
-//   marks: account -> { n: name, i: insult, c: own insult (optional), t: time marked, h: hero, e: matches met, last: match }
-//   cfg:   switches of the settings page (missing = default)
-//   ins:   own insults, hid: built-in insults turned off
+// (store.html, which keeps the data in the browser storage); build.py / publish_store.py paste it into both.
+//   marks: account -> { n: name, t: time marked, h: hero, e: matches met, last: match last met in }
+//   cfg:   switches of the settings section (missing = default)
 //   ver:   bumped by the store page on every save; self: the local player's account
 function ddbEmpty() {
-	return { v: 1, ver: 0, self: "", cfg: {}, ins: [], hid: [], marks: {} };
+	return { v: 1, ver: 0, self: "", cfg: {}, marks: {} };
 }
 
 // one change: [kind, ...args]
 function ddbApply(db, op) {
-	var a = op[1], m, i;
+	var a = op[1], m;
 	switch (op[0]) {
 		case "mark":
 			db.marks[a] = op[2];
 			break;
 		case "unmark":
 			delete db.marks[a];
-			break;
-		case "field":       // [field, acc, name, value]; null drops the field
-			m = db.marks[a];
-			if (m) {
-				if (op[3] === null || op[3] === "") delete m[op[2]];
-				else m[op[2]] = op[3];
-			}
 			break;
 		case "seen":        // [seen, acc, match, name]: once per match
 			m = db.marks[a];
@@ -49,20 +41,6 @@ function ddbApply(db, op) {
 		case "cfg":
 			db.cfg[a] = op[2];
 			break;
-		case "addins":
-			if (db.ins.indexOf(a) < 0) db.ins.push(a);
-			i = db.hid.indexOf(a);
-			if (i >= 0) db.hid.splice(i, 1);
-			break;
-		case "delins":      // own ones go away, built-in ones are turned off
-			i = db.ins.indexOf(a);
-			if (i >= 0) db.ins.splice(i, 1);
-			else if (db.hid.indexOf(a) < 0) db.hid.push(a);
-			break;
-		case "resetins":
-			db.ins = [];
-			db.hid = [];
-			break;
 		case "self":
 			db.self = a;
 			break;
@@ -74,9 +52,7 @@ function ddbApply(db, op) {
 function ddbClean(db) {
 	var e = ddbEmpty();
 	if (!db || typeof db !== "object") return e;
-	for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k) && (db[k] === undefined || typeof db[k] !== typeof e[k])) db[k] = e[k];
-	if (Object.prototype.toString.call(db.ins) !== "[object Array]") db.ins = [];
-	if (Object.prototype.toString.call(db.hid) !== "[object Array]") db.hid = [];
+	for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k) && (db[k] === undefined || db[k] === null || typeof db[k] !== typeof e[k])) db[k] = e[k];
 	return db;
 }
 

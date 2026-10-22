@@ -1,0 +1,144 @@
+<!doctype html><meta charset="utf-8"><title>Deadlock UI mod store</title><script>
+// Store page of the Deadlock "dolboeb detector" UI mod, opened by the game in a hidden HTML panel. Panorama cannot
+// keep anything between game launches, the browser storage of this page can: it holds the mod's data (one JSON
+// value) on the player's own PC. Nothing leaves the PC; the page makes no requests.
+//   store.html#op=get&p=<title prefix>&q=<request id>&have=<version the game holds>
+//   store.html#op=put&p=..&q=..&ops=<JSON list of changes>
+// The page stays loaded between jobs: the game only changes the part after "#".
+// Answers go back through document.title, one short message at a time: <prefix>{ q, s, f, d }.
+var KEY = "ddb_db", PREV_KEY = "ddb_db_prev";
+var MAX_MESSAGE = 1500;
+var SPACING_MS = 250;   // time between two titles, so the game sees every one of them
+var queue = [], busy = false, seq = 0, current = null;
+
+// The mod's data and the changes made to it. The same code runs in the game (DDB) and in the store page
+// (store.html, which keeps the data in the browser storage); build.py / publish_bridge.py paste it into both.
+//   marks: account -> { n: name, i: insult, c: own insult (optional), t: time marked, h: hero, e: matches met, last: match }
+//   cfg:   switches of the settings page (missing = default)
+//   ins:   own insults, hid: built-in insults turned off
+//   ver:   bumped by the store page on every save; self: the local player's account
+function ddbEmpty() {
+	return { v: 1, ver: 0, self: "", cfg: {}, ins: [], hid: [], marks: {} };
+}
+
+// one change: [kind, ...args]
+function ddbApply(db, op) {
+	var a = op[1], m, i;
+	switch (op[0]) {
+		case "mark":
+			db.marks[a] = op[2];
+			break;
+		case "unmark":
+			delete db.marks[a];
+			break;
+		case "field":       // [field, acc, name, value]; null drops the field
+			m = db.marks[a];
+			if (m) {
+				if (op[3] === null || op[3] === "") delete m[op[2]];
+				else m[op[2]] = op[3];
+			}
+			break;
+		case "seen":        // [seen, acc, match, name]: once per match
+			m = db.marks[a];
+			if (m && m.last !== op[2]) {
+				m.e = (m.e || 0) + 1;
+				m.last = op[2];
+				if (op[3]) m.n = op[3];
+			}
+			break;
+		case "cfg":
+			db.cfg[a] = op[2];
+			break;
+		case "addins":
+			if (db.ins.indexOf(a) < 0) db.ins.push(a);
+			i = db.hid.indexOf(a);
+			if (i >= 0) db.hid.splice(i, 1);
+			break;
+		case "delins":      // own ones go away, built-in ones are turned off
+			i = db.ins.indexOf(a);
+			if (i >= 0) db.ins.splice(i, 1);
+			else if (db.hid.indexOf(a) < 0) db.hid.push(a);
+			break;
+		case "resetins":
+			db.ins = [];
+			db.hid = [];
+			break;
+		case "self":
+			db.self = a;
+			break;
+	}
+	return db;
+}
+
+// data read from storage, with whatever is missing filled in
+function ddbClean(db) {
+	var e = ddbEmpty();
+	if (!db || typeof db !== "object") return e;
+	for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k) && (db[k] === undefined || typeof db[k] !== typeof e[k])) db[k] = e[k];
+	if (Object.prototype.toString.call(db.ins) !== "[object Array]") db.ins = [];
+	if (Object.prototype.toString.call(db.hid) !== "[object Array]") db.hid = [];
+	return db;
+}
+
+
+function next() {
+	var item = queue.shift();
+	if (!item) { busy = false; return; }
+	busy = true;
+	seq++;
+	document.title = item.job.prefix + JSON.stringify({ q: item.job.req, s: seq, f: item.fin ? 1 : 0, d: item.data });
+	setTimeout(next, SPACING_MS);
+}
+
+function Job(params) {
+	this.P = params;
+	this.prefix = params.get("p") || "";
+	this.req = Number(params.get("q"));
+}
+
+Job.prototype.send = function (data, fin) {
+	if (current !== this) return;
+	queue.push({ job: this, data: data, fin: fin });
+	if (!busy) next();
+};
+
+function load() {
+	try { return ddbClean(JSON.parse(localStorage.getItem(KEY) || "null")); } catch (e) { return ddbEmpty(); }
+}
+
+function save(db) {
+	var old = localStorage.getItem(KEY);
+	if (old) localStorage.setItem(PREV_KEY, old);
+	localStorage.setItem(KEY, JSON.stringify(db));
+}
+
+var jobs = {
+	// the whole data in pieces (k: "c", i of n), or "same" when the game already holds this version
+	get: function (job) {
+		var db = load();
+		if (String(db.ver) === job.P.get("have")) return job.send({ k: "same", ver: db.ver }, 1);
+		var text = JSON.stringify(db), n = Math.max(1, Math.ceil(text.length / MAX_MESSAGE));
+		for (var i = 0; i < n; i++) job.send({ k: "c", i: i, n: n, t: text.substr(i * MAX_MESSAGE, MAX_MESSAGE) }, i === n - 1 ? 1 : 0);
+	},
+	put: function (job) {
+		var ops;
+		try { ops = JSON.parse(job.P.get("ops") || "[]"); } catch (e) { return job.send({ k: "e", e: "bad ops" }, 1); }
+		var db = load(), before = db.ver;
+		ops.forEach(function (op) { ddbApply(db, op); });
+		db.ver = before + 1;
+		try { save(db); } catch (e) { return job.send({ k: "e", e: "storage: " + e }, 1); }
+		job.send({ k: "ok", ver: db.ver, was: before }, 1);
+	}
+};
+
+function start() {
+	var job = new Job(new URLSearchParams(location.hash.slice(1) || location.search.slice(1)));
+	if (current && current.req === job.req && current.prefix === job.prefix) return;
+	current = job;
+	queue = queue.filter(function (item) { return item.job === job; });
+	(jobs[job.P.get("op")] || function () { job.send({ k: "e", e: "unknown op" }, 1); })(job);
+}
+
+window.addEventListener("hashchange", start);
+start();
+</script>

@@ -44,6 +44,9 @@ function ddbApply(db, op) {
 		case "self":
 			db.self = a;
 			break;
+		case "diag":        // what the mod saw in the last match (read off the disk when something does not work)
+			db.diag = a;
+			break;
 	}
 	return db;
 }

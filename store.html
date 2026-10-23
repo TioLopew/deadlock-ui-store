@@ -13,50 +13,35 @@ var queue = [], busy = false, seq = 0, current = null;
 
 // The mod's data and the changes made to it. The same code runs in the game (DDB) and in the store page
 // (store.html, which keeps the data in the browser storage); build.py / publish_store.py paste it into both.
-//   marks: account -> { n: name, t: time marked, h: hero, e: matches met, last: match last met in }
-//   cfg:   switches of the settings section (missing = default)
-//   ver:   bumped by the store page on every save; self: the local player's account
+//   marks: account -> { n: name, h: hero, t: time marked }   (the list of marked players)
+//   on:    the mod is switched on
+//   ver:   bumped by the store page on every save
 function ddbEmpty() {
-	return { v: 1, ver: 0, self: "", cfg: {}, marks: {} };
+	return { ver: 0, on: true, marks: {} };
 }
 
-// one change: [kind, ...args]
+// one change: ["mark", acc, entry] / ["unmark", acc] / ["on", true|false]
 function ddbApply(db, op) {
-	var a = op[1], m;
-	switch (op[0]) {
-		case "mark":
-			db.marks[a] = op[2];
-			break;
-		case "unmark":
-			delete db.marks[a];
-			break;
-		case "seen":        // [seen, acc, match, name]: once per match
-			m = db.marks[a];
-			if (m && m.last !== op[2]) {
-				m.e = (m.e || 0) + 1;
-				m.last = op[2];
-				if (op[3]) m.n = op[3];
-			}
-			break;
-		case "cfg":
-			db.cfg[a] = op[2];
-			break;
-		case "self":
-			db.self = a;
-			break;
-		case "diag":        // what the mod saw in the last match (read off the disk when something does not work)
-			db.diag = a;
-			break;
-	}
+	if (op[0] === "mark") db.marks[op[1]] = op[2];
+	else if (op[0] === "unmark") delete db.marks[op[1]];
+	else if (op[0] === "on") db.on = !!op[1];
 	return db;
 }
 
-// data read from storage, with whatever is missing filled in
+// data read from storage: only what the mod keeps (older versions kept more)
 function ddbClean(db) {
 	var e = ddbEmpty();
 	if (!db || typeof db !== "object") return e;
-	for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k) && (db[k] === undefined || db[k] === null || typeof db[k] !== typeof e[k])) db[k] = e[k];
-	return db;
+	if (typeof db.ver === "number") e.ver = db.ver;
+	if (db.on === false || (db.cfg && db.cfg.on === false)) e.on = false;
+	if (db.marks && typeof db.marks === "object") {
+		for (var acc in db.marks) {
+			var m = db.marks[acc];
+			if (!/^\d+$/.test(acc) || !m || typeof m !== "object") continue;
+			e.marks[acc] = { n: String(m.n || ""), h: String(m.h || ""), t: Number(m.t) || 0 };
+		}
+	}
+	return e;
 }
 
 

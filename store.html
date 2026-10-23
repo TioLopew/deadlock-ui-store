@@ -14,17 +14,18 @@ var queue = [], busy = false, seq = 0, current = null;
 // The mod's data and the changes made to it. The same code runs in the game (DDB) and in the store page
 // (store.html, which keeps the data in the browser storage); build.py / publish_store.py paste it into both.
 //   marks: account -> { n: name, h: hero, t: time marked }   (the list of marked players)
-//   on:    the mod is switched on
+//   on:    the mod is switched on; toast: the alert at match start is switched on
 //   ver:   bumped by the store page on every save
 function ddbEmpty() {
-	return { ver: 0, on: true, marks: {} };
+	return { ver: 0, on: true, toast: true, marks: {} };
 }
 
-// one change: ["mark", acc, entry] / ["unmark", acc] / ["on", true|false]
+// one change: ["mark", acc, entry] / ["unmark", acc] / ["on", true|false] / ["toast", true|false]
 function ddbApply(db, op) {
 	if (op[0] === "mark") db.marks[op[1]] = op[2];
 	else if (op[0] === "unmark") delete db.marks[op[1]];
 	else if (op[0] === "on") db.on = !!op[1];
+	else if (op[0] === "toast") db.toast = !!op[1];
 	return db;
 }
 
@@ -34,6 +35,7 @@ function ddbClean(db) {
 	if (!db || typeof db !== "object") return e;
 	if (typeof db.ver === "number") e.ver = db.ver;
 	if (db.on === false || (db.cfg && db.cfg.on === false)) e.on = false;
+	if (db.toast === false) e.toast = false;
 	if (db.marks && typeof db.marks === "object") {
 		for (var acc in db.marks) {
 			var m = db.marks[acc];
